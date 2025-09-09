@@ -1,0 +1,168 @@
+import telebot
+from telebot import types
+import random
+
+# 🔑 Токен и ID админа
+TOKEN = "8034804690:AAG8Cj9usFEj81ad9iXcS7upMbN-yxrQPjo"
+ADMIN_ID = 7392835467
+
+bot = telebot.TeleBot(TOKEN)
+
+# Храним состояния пользователей
+user_states = {}   # {user_id: "waiting_for_topic"}
+pending_replies = {}  # {admin_id: client_id}
+
+# Несколько картинок для красоты
+banner_photos = [
+    "https://i.pinimg.com/736x/d4/bf/f4/d4bff4c90fbdbf3016d4fac884e24c92.jpg",  # ноутбук + работа
+    "https://i.pinimg.com/736x/c5/92/23/c592234064d83e45d2a3b75862452a30.jpg",  # команда за ноутбуками
+    "https://i.pinimg.com/736x/62/77/46/627746d1d482bf68a36313eaf864c944.jpg",     # дизайн презентации
+    "https://i.pinimg.com/736x/9a/67/6b/9a676bc296601c8d1dcf514b5090030c.jpg",  # деловая встреча
+
+]
+
+
+
+# 📌 Функция старта (чтобы можно было вызвать вручную)
+def send_start_menu(chat_id):
+    photo_url = random.choice(banner_photos)  # выбираем случайный баннер
+    caption = (
+        "👋 Привет!\n\n"
+        "📊 *Стоимость презентации:*\n"
+        "▫️ 1 слайд — *150 тенге*\n"
+        "▫️ 1 слайд — *25 рублей*\n\n"
+        "👇 Выбери действие ниже:"
+    )
+
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        types.InlineKeyboardButton("📌 Заказать", callback_data="order"),
+        types.InlineKeyboardButton("ℹ Обо мне", callback_data="about")
+    )
+    kb.add(types.InlineKeyboardButton("🎮 Играть", callback_data="game"))
+
+    bot.send_photo(
+        chat_id=chat_id,
+        photo=photo_url,
+        caption=caption,
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+
+
+# 📌 Стартовое меню
+@bot.message_handler(commands=['start'])
+def start(message):
+    send_start_menu(message.chat.id)
+
+
+# 📌 Обработка кнопок
+@bot.callback_query_handler(func=lambda call: True)
+def on_callback(call):
+    if call.data == "order":
+        bot.send_message(
+            call.message.chat.id,
+            "✍️ Напиши *тему своей презентации* одним сообщением.",
+            parse_mode="Markdown"
+        )
+        user_states[call.from_user.id] = "waiting_for_topic"
+
+    elif call.data == "about":
+        bot.send_message(
+            call.message.chat.id,
+            "💡 *Обо мне:*\n\n"
+            "Я делаю презентации на заказ 📊\n"
+            "⚡ Любая тема, быстро и качественно.\n\n"
+            "По вопросам 👉 @suga_science 💪",
+            parse_mode="Markdown"
+        )
+
+    # 🎮 Игра
+    elif call.data == "game":
+        kb = types.InlineKeyboardMarkup(row_width=5)
+        for i in range(1, 6):
+            kb.add(types.InlineKeyboardButton(str(i), callback_data=f"guess_{i}"))
+        bot.send_message(
+            call.message.chat.id,
+            "🎲 Я загадал число от 1 до 5. Попробуй угадать!",
+            reply_markup=kb
+        )
+
+    elif call.data.startswith("guess_"):
+        guess = int(call.data.split("_")[1])
+        secret = random.randint(1, 5)
+        if guess == secret:
+            bot.send_message(call.message.chat.id, f"🎉 Правильно! Я загадал {secret}. Ты выиграл!")
+        else:
+            bot.send_message(call.message.chat.id, f"😅 Не угадал, я загадал {secret}. Попробуй снова!")
+        send_start_menu(call.message.chat.id)
+
+    # ✅ Принять заказ
+    elif call.data.startswith("accept_"):
+        client_id = int(call.data.split("_")[1])
+        bot.send_message(client_id, "✅ Ваш заказ принят и находится в процессе!")
+        bot.send_message(call.message.chat.id, "Заказ помечен как *принятый* ✅", parse_mode="Markdown")
+
+    # ✍️ Ответить клиенту
+    elif call.data.startswith("reply_"):
+        client_id = int(call.data.split("_")[1])
+        pending_replies[call.from_user.id] = client_id
+        bot.send_message(call.message.chat.id, "✍️ Введите сообщение для клиента, и я его отправлю.")
+
+    # 📦 Заказ выполнен
+    elif call.data.startswith("done_"):
+        client_id = int(call.data.split("_")[1])
+        bot.send_message(client_id, "✅ Ваша презентация готова! Спасибо за заказ 🙌")
+        send_start_menu(client_id)
+        bot.send_message(call.message.chat.id, "Заказ отмечен как *завершённый* 📦", parse_mode="Markdown")
+
+
+# 📌 Сообщения от пользователей
+@bot.message_handler(func=lambda m: True)
+def on_message(message):
+    uid = message.from_user.id
+
+    # Если админ отвечает клиенту
+    if uid == ADMIN_ID and uid in pending_replies:
+        client_id = pending_replies.pop(uid)
+        bot.send_message(client_id, f"📩 Сообщение от администратора:\n\n{message.text}")
+        bot.send_message(ADMIN_ID, "✅ Сообщение отправлено клиенту.")
+        return
+
+    # Если клиент оставляет тему
+    if user_states.get(uid) == "waiting_for_topic":
+        topic = message.text.strip()
+
+        bot.send_message(message.chat.id, "✅ Заявка отправлена! Ожидайте ответа.")
+
+        uname = f"@{message.from_user.username}" if message.from_user.username else \
+            f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip()
+
+        # Кнопки для админа
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            types.InlineKeyboardButton("✅ Принять заказ", callback_data=f"accept_{uid}"),
+            types.InlineKeyboardButton("✍️ Ответить клиенту", callback_data=f"reply_{uid}"),
+            types.InlineKeyboardButton("📦 Заказ выполнен", callback_data=f"done_{uid}")
+        )
+
+        # Отправляем заказ админу
+        try:
+            bot.send_message(
+                ADMIN_ID,
+                f"📢 *Новый заказ!*\n\n"
+                f"👤 От: {uname} (ID: {uid})\n"
+                f"📌 Тема: {topic}",
+                parse_mode="Markdown",
+                reply_markup=kb
+            )
+        except Exception as e:
+            print("Не удалось отправить уведомление админу:", e)
+
+        # Сбрасываем состояние
+        user_states.pop(uid, None)
+
+
+# 🚀 Запуск бота
+print("✅ Bot is running. Send /start to your bot.")
+bot.polling(none_stop=True, interval=0, timeout=20)
